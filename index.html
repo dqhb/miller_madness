@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>miller madness</title>
+    <style>
+        body { margin: 0; background: #020205; color: #00ffcc; font-family: 'Courier New', monospace; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; }
+        canvas { background: #000; border: 4px solid #00ffcc; box-shadow: 0 0 50px #0044ff; display: block; }
+        #ui { position: absolute; top: 10px; width: 780px; display: flex; justify-content: space-between; font-size: 20px; font-weight: bold; pointer-events: none; z-index: 10; }
+        #meter-container { width: 100px; height: 10px; background: #333; border: 1px solid #fff; margin-top: 5px; }
+        #meter-fill { width: 0%; height: 100%; background: #00ffcc; }
+        #overlay { position: absolute; display: none; flex-direction: column; align-items: center; justify-content: center; width: 800px; height: 600px; background: rgba(0,0,0,0.8); z-index: 20; }
+        #resetBtn { padding: 15px 30px; font-size: 24px; font-family: 'Courier New'; background: #00ffcc; border: none; cursor: pointer; font-weight: bold; border-radius: 5px; }
+        #resetBtn:hover { background: #00ccaa; transform: scale(1.1); }
+        h1 { margin-bottom: 20px; font-size: 40px; color: #ff3300; }
+    </style>
+</head>
+<body>
+
+    <div id="ui">
+        <div>WAVE: <span id="wave">1</span></div>
+        <div>WIDE METER: <div id="meter-container"><div id="meter-fill"></div></div></div>
+        <div>LIVES: <span id="lives">3</span></div>
+    </div>
+
+    <div id="overlay">
+        <h1 id="statusText">MILLER DEFEATED</h1>
+        <button id="resetBtn">RESET GAME</button>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const overlay = document.getElementById('overlay');
+        const resetBtn = document.getElementById('resetBtn');
+        canvas.width = 800;
+        canvas.height = 600;
+
+        const millerImg = new Image();
+        let imgLoaded = false;
+        millerImg.src = 'miller.png'; 
+
+        let score, lives, wave, gameActive, enemySpeed, dogFireRate;
+        let isSuper, superCharge, player, bullets, enemyBullets, dogs, keys, dogDir;
+
+        function initGame() {
+            lives = 3; wave = 1; gameActive = true;
+            enemySpeed = 1.0; // Slow but steady start
+            dogFireRate = 0.005;
+            isSuper = false; superCharge = 100;
+            bullets = []; enemyBullets = []; dogs = []; keys = {};
+            dogDir = 1; // 1 = Right, -1 = Left
+            player = { x: 340, y: 520, w: 130, h: 70, speed: 7 };
+            
+            overlay.style.display = 'none';
+            document.getElementById('lives').innerText = lives;
+            spawnWave();
+            if (!window.animationStarted) { window.animationStarted = true; animate(); }
+        }
+
+        function spawnWave() {
+            dogs.length = 0;
+            for (let r = 0; r < 4; r++) {
+                for (let c = 0; c < 8; c++) {
+                    dogs.push({
+                        x: 100 + c * 80, y: 60 + r * 50,
+                        w: 50, h: 40, alive: true,
+                        color: r === 0 ? "#FFD700" : "#8B4513"
+                    });
+                }
+            }
+            document.getElementById('wave').innerText = wave;
+        }
+
+        function drawPixelDog(x, y, w, h, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(x + w*0.2, y + h*0.3, w*0.6, h*0.5); 
+            ctx.fillRect(x + w*0.5, y + h*0.1, w*0.4, h*0.4); 
+            ctx.fillStyle = "#5D2E0A";
+            ctx.fillRect(x + w*0.55, y, w*0.1, h*0.2); 
+            ctx.fillRect(x + w*0.8, y, w*0.1, h*0.2);
+            ctx.fillStyle = "white";
+            ctx.fillRect(x + w*0.65, y + h*0.2, 4, 4); 
+            ctx.fillRect(x + w*0.8, y + h*0.2, 4, 4);
+        }
+
+        window.addEventListener('keydown', e => {
+            keys[e.code] = true;
+            if (e.code === 'ShiftLeft' && superCharge >= 100 && gameActive) {
+                isSuper = true; superCharge = 0; player.w = 280; 
+                setTimeout(() => { if(gameActive) player.w = 130; isSuper = false; }, 800);
+            }
+        });
+        window.addEventListener('keyup', e => keys[e.code] = false);
+        resetBtn.addEventListener('click', initGame);
+
+        function update() {
+            if (!gameActive) return;
+
+            if (superCharge < 100) superCharge += 0.4;
+            document.getElementById('meter-fill').style.width = superCharge + "%";
+
+            if (keys['KeyA'] && player.x > 0) player.x -= player.speed;
+            if (keys['KeyD'] && player.x < canvas.width - player.w) player.x += player.speed;
+
+            if (keys['Space']) {
+                if (bullets.length < 5) {
+                    bullets.push({ x: player.x + (player.w/2) - 30, y: player.y, w: 60, h: 35 });
+                }
+                keys['Space'] = false; 
+            }
+
+            bullets.forEach((b, i) => { b.y -= 10; if (b.y < 0) bullets.splice(i, 1); });
+
+            // --- THE LOOPING LOGIC ---
+            let reachedEdge = false;
+            dogs.forEach(d => {
+                if (!d.alive) return;
+                d.x += enemySpeed * dogDir;
+                // Check if any dog hit a wall
+                if (d.x + d.w > canvas.width || d.x < 0) reachedEdge = true;
+            });
+
+            if (reachedEdge) {
+                dogDir *= -1; // Reverse direction
+                dogs.forEach(d => { d.y += 20; }); // Drop down
+            }
+            // -------------------------
+
+            dogs.forEach(d => {
+                if (!d.alive) return;
+                if (Math.random() < dogFireRate) {
+                    enemyBullets.push({ x: d.x + 20, y: d.y + 30, vy: 5, t: "WOOF" });
+                }
+                // Check if dogs reached Miller's height
+                if (d.y + d.h > player.y) endGame();
+            });
+
+            enemyBullets.forEach((eb, i) => {
+                eb.y += eb.vy;
+                if (eb.y > canvas.height) enemyBullets.splice(i, 1);
+                if (!isSuper && eb.x > player.x && eb.x < player.x + player.w && eb.y > player.y && eb.y < player.y + player.h) {
+                    enemyBullets.splice(i, 1);
+                    lives--;
+                    document.getElementById('lives').innerText = lives;
+                    if (lives <= 0) endGame();
+                }
+            });
+
+            bullets.forEach((b, bi) => {
+                dogs.forEach((d, di) => {
+                    if (d.alive && b.x < d.x + d.w && b.x + b.w > d.x && b.y < d.y + d.h && b.y + b.h > d.y) {
+                        d.alive = false; bullets.splice(bi, 1);
+                    }
+                });
+            });
+
+            if (dogs.length > 0 && dogs.every(d => !d.alive)) {
+                wave++; enemySpeed += 0.4; dogFireRate += 0.001; spawnWave();
+            }
+        }
+
+        function endGame() { gameActive = false; overlay.style.display = 'flex'; }
+
+        function draw() {
+            ctx.fillStyle = "black";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            if (gameActive) {
+                if (isSuper) { ctx.shadowBlur = 15; ctx.shadowColor = "#00ffcc"; }
+                if (imgLoaded) ctx.drawImage(millerImg, player.x, player.y, player.w, player.h);
+                else { ctx.fillStyle = "#00ffcc"; ctx.fillRect(player.x, player.y, player.w, player.h); }
+                ctx.shadowBlur = 0;
+                bullets.forEach(b => {
+                    if (imgLoaded) ctx.drawImage(millerImg, b.x, b.y, b.w, b.h);
+                    else { ctx.fillStyle = "white"; ctx.fillRect(b.x, b.y, b.w, b.h); }
+                });
+                dogs.forEach(d => { if (d.alive) drawPixelDog(d.x, d.y, d.w, d.h, d.color); });
+                ctx.fillStyle = "white";
+                enemyBullets.forEach(eb => ctx.fillText(eb.t, eb.x, eb.y));
+            }
+        }
+
+        function animate() { update(); draw(); requestAnimationFrame(animate); }
+
+        millerImg.onload = () => { imgLoaded = true; };
+        initGame();
+    </script>
+</body>
+</html>
+
